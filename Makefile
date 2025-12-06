@@ -175,6 +175,9 @@ mkfs/mkfs: mkfs/mkfs.c $K/fs.h $K/param.h
 .PRECIOUS: %.o
 
 UPROGS=\
+	$U/_cpubound\
+	$U/_iobound\
+	$U/_timeslice\
 	$U/_cat\
 	$U/_echo\
 	$U/_forktest\
