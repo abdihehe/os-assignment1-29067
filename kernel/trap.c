@@ -8,10 +8,9 @@
 
 struct spinlock tickslock;
 uint ticks;
-
+int mlfq_aging_ticks = 0;
 extern char trampoline[], uservec[];
 
-// in kernelvec.S, calls kerneltrap().
 void kernelvec();
 
 extern int devintr();
@@ -22,7 +21,6 @@ trapinit(void)
   initlock(&tickslock, "time");
 }
 
-// set up to take exceptions and traps while in the kernel.
 void
 trapinithart(void)
 {
@@ -80,9 +78,44 @@ usertrap(void)
   if(killed(p))
     kexit(-1);
 
-  // give up the CPU if this is a timer interrupt.
-  if(which_dev == 2)
-    yield();
+
+
+if(which_dev == 2) {
+  struct proc *p = myproc();
+  if(p && p->state == RUNNING) {
+    acquire(&p->lock);
+    p->quantum_used++;
+    p->ticks_in_queue++;
+    p->age++;
+    
+    int quantum = mlfq_get_quantum(p->priority);
+//    printf("\ntimer interupt\n");    
+    if(p->quantum_used >= quantum) {
+      if(p->priority < NQUEUE - 1) {
+        mlfq_dequeue(p);
+        p->priority++;
+        printf("MLFQ: PID %d demoted to queue %d (used full quantum)\n", p->pid, p->priority);
+        mlfq_enqueue(p);
+      } else {
+        mlfq_dequeue(p);
+        mlfq_enqueue(p);
+      }
+    }
+    
+    release(&p->lock);
+  }
+  
+  mlfq_aging_ticks++;
+  printf("Tick: %d\n", mlfq_aging_ticks);
+  if(mlfq_aging_ticks >= 20) {
+    printf("MLFQ: Priority boost - aging all processes\n");
+    mlfq_boost_priorities();
+    mlfq_aging_ticks = 0;
+  }
+  
+  yield();
+}
+
 
   prepare_return();
 
@@ -93,6 +126,7 @@ usertrap(void)
   return satp;
 }
 
+//
 //
 // set up trapframe and control registers for a return to user space
 //
@@ -130,8 +164,11 @@ prepare_return(void)
   w_sepc(p->trapframe->epc);
 }
 
-// interrupts and exceptions from kernel code go here via kernelvec,
-// on whatever the current kernel stack is.
+
+
+
+
+
 void 
 kerneltrap()
 {
@@ -151,15 +188,62 @@ kerneltrap()
     panic("kerneltrap");
   }
 
-  // give up the CPU if this is a timer interrupt.
-  if(which_dev == 2 && myproc() != 0)
-    yield();
+
+if(which_dev == 2 && myproc() != 0) {
+printf("timer interput kernl"); 
+ struct proc *p = myproc();
+  if(p && p->state == RUNNING) {
+    acquire(&p->lock);
+    
+    
+    p->quantum_used++;
+    p->ticks_in_queue++;
+    p->age++;
+    
+    // DEBUG: After increment  
+    int quantum = mlfq_get_quantum(p->priority);
+  //  printf("DEBUG-AFTER: PID %d Q=%d quantum_used=%d quantum=%d\n", 
+    //       p->pid, p->priority, p->quantum_used, quantum);
+    
+    // Check if process used its full quantum
+    if(p->quantum_used >= quantum) {
+   //   printf("DEBUG: PID %d quantum_used=%d, quantum=%d, current Q=%d\n", 
+     //        p->pid, p->quantum_used, quantum, p->priority);
+      
+      if(p->priority < NQUEUE - 1) {
+        mlfq_dequeue(p);
+        p->priority = p->priority + 1;
+      //  printf("DEBUG: Demoting to Q%d\n", p->priority);
+printf("\nMLFQ: PID %d demoted to queue %d\n", p->pid, p->priority);
+
+       
+ mlfq_enqueue(p);
+      } else {
+        mlfq_dequeue(p);
+        mlfq_enqueue(p);
+      }
+    }
+    release(&p->lock);
+  }
+  
+  mlfq_aging_ticks++;
+ printf("Tick %d\n", mlfq_aging_ticks);
+  if(mlfq_aging_ticks >= 20) {
+    printf("MLFQ: Priority boost - aging all processes\n");
+    mlfq_boost_priorities();
+    mlfq_aging_ticks = 0;
+  }
+}
+
 
   // the yield() may have caused some traps to occur,
   // so restore trap registers for use by kernelvec.S's sepc instruction.
   w_sepc(sepc);
   w_sstatus(sstatus);
 }
+
+
+
 
 void
 clockintr()

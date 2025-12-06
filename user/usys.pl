@@ -20,7 +20,8 @@ sub entry {
     print " ecall\n";
     print " ret\n";
 }
-	
+
+entry("yield");	
 entry("fork");
 entry("exit");
 entry("wait");
@@ -42,3 +43,6 @@ entry("getpid");
 entry("sbrk");
 entry("pause");
 entry("uptime");
+entry("getprocinfo");
+
+entry("sleep");

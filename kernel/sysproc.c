@@ -7,6 +7,14 @@
 #include "proc.h"
 #include "vm.h"
 
+
+uint64
+sys_yield(void)
+{
+  yield();
+  return 0;
+}
+
 uint64
 sys_exit(void)
 {
@@ -104,4 +112,45 @@ sys_uptime(void)
   xticks = ticks;
   release(&tickslock);
   return xticks;
+}
+
+
+uint64
+sys_getprocinfo(void)
+{
+  int pid;
+  uint64 uaddr;
+  struct procinfo pi;
+
+  argint(0, &pid);
+  argaddr(1, &uaddr);
+
+  if(getprocinfo(pid, &pi) < 0)
+    return -1;
+
+  if(copyout(myproc()->pagetable, uaddr, (char *)&pi, sizeof(pi)) < 0)
+    return -1;
+
+  return 0;
+}
+
+uint64
+sys_sleep(void)
+{
+  int n;
+  uint ticks0;
+
+  argint(0, &n);  // No return value check - xv6 version
+  
+  acquire(&tickslock);
+  ticks0 = ticks;
+  while(ticks - ticks0 < n){
+    if(myproc()->killed){
+      release(&tickslock);
+      return -1;
+    }
+    sleep(&ticks, &tickslock);
+  }
+  release(&tickslock);
+  return 0;
 }

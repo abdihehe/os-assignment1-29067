@@ -6,6 +6,13 @@
 #include "proc.h"
 #include "defs.h"
 
+
+struct proc* queues[NQUEUE] = {0};  // MLFQ priority queues
+struct spinlock queue_locks[NQUEUE]; // Locks for each queue
+int mlfq_ticks = 0;                 // Global tick counter for aging
+
+
+
 struct cpu cpus[NCPU];
 
 struct proc proc[NPROC];
@@ -29,6 +36,126 @@ struct spinlock wait_lock;
 // Allocate a page for each process's kernel stack.
 // Map it high in memory, followed by an invalid
 // guard page.
+
+
+
+// MLFQ global variables
+
+// MLFQ helper functions (define them BEFORE they're used)
+void mlfq_init(void) {
+  for(int i = 0; i < NQUEUE; i++) {
+    initlock(&queue_locks[i], "queue_lock");
+    queues[i] = 0;
+  }
+}
+
+/*
+void mlfq_enqueue(struct proc *p) {
+  if(p->priority < 0 || p->priority >= NQUEUE)
+    p->priority = 0;
+    
+  int q = p->priority;
+  acquire(&queue_locks[q]);
+  
+  // Simple add to front (we'll fix round-robin later)
+  p->next = queues[q];
+  queues[q] = p;
+  p->ticks_in_queue = 0;
+  p->quantum_used = 0;
+  
+  release(&queue_locks[q]);
+}
+*/
+void mlfq_enqueue(struct proc *p) {
+  if(p->priority < 0 || p->priority >= NQUEUE)
+    p->priority = 0;
+    
+  int q = p->priority;
+  acquire(&queue_locks[q]);
+  
+  // Add to END of queue for round-robin
+  if(queues[q] == 0) {
+    // Queue is empty
+    queues[q] = p;
+    p->next = 0;
+  } else {
+    // Find last process in queue
+    struct proc *current = queues[q];
+    while(current->next != 0) {
+      current = current->next;
+    }
+    current->next = p;
+    p->next = 0;
+  }
+  
+  p->ticks_in_queue = 0;
+  p->quantum_used = 0;
+  
+  release(&queue_locks[q]);
+}
+
+void mlfq_dequeue(struct proc *p) {
+  int q = p->priority;
+  if(q < 0 || q >= NQUEUE)
+    return;
+    
+  acquire(&queue_locks[q]);
+  
+  struct proc **prev = &queues[q];
+  for(struct proc *curr = queues[q]; curr; curr = curr->next) {
+    if(curr == p) {
+      *prev = curr->next;
+      break;
+    }
+    prev = &curr->next;
+  }
+  
+  release(&queue_locks[q]);
+}
+/*
+void mlfq_boost_priorities(void) {
+  for(int q = 1; q < NQUEUE; q++) {
+    acquire(&queue_locks[q]);
+    struct proc *p = queues[q];
+    while(p) {
+      struct proc *next = p->next;
+      mlfq_dequeue(p);
+      p->priority = 0;
+      p->age = 0;
+      mlfq_enqueue(p);
+      p = next;
+    }
+    release(&queue_locks[q]);
+  }
+}
+*/
+
+void mlfq_boost_priorities(void) {
+  struct proc *p;
+  
+  // Boost all processes to highest priority
+  for(p = proc; p < &proc[NPROC]; p++) {
+    acquire(&p->lock);
+    if(p->state != UNUSED) {
+      if(p->priority > 0) {
+        p->priority = 0;  // Boost to queue 0
+        p->age = 0;
+        p->quantum_used = 0;
+      }
+    }
+    release(&p->lock);
+  }
+}
+int mlfq_get_quantum(int priority) {
+  switch(priority) {
+    case 0: return QUANTUM_0;
+    case 1: return QUANTUM_1; 
+    case 2: return QUANTUM_2;
+    case 3: return QUANTUM_3;
+    default: return QUANTUM_3;
+  }
+}
+
 void
 proc_mapstacks(pagetable_t kpgtbl)
 {
@@ -124,6 +251,12 @@ allocproc(void)
 found:
   p->pid = allocpid();
   p->state = USED;
+ p->consecutive_quick_yields = 0;
+  p->priority = 0;
+  p->ticks_in_queue = 0;
+  p->age = 0;
+  p->quantum_used = 0;
+p->next = 0;
 
   // Allocate a trapframe page.
   if((p->trapframe = (struct trapframe *)kalloc()) == 0){
@@ -229,6 +362,8 @@ userinit(void)
   p->state = RUNNABLE;
 
   release(&p->lock);
+
+ mlfq_enqueue(p);
 }
 
 // Shrink user memory by n bytes.
@@ -259,7 +394,6 @@ kfork(void)
   int i, pid;
   struct proc *np;
   struct proc *p = myproc();
-
   // Allocate process.
   if((np = allocproc()) == 0){
     return -1;
@@ -298,7 +432,7 @@ kfork(void)
   acquire(&np->lock);
   np->state = RUNNABLE;
   release(&np->lock);
-
+   mlfq_enqueue(np);
   return pid;
 }
 
@@ -411,49 +545,39 @@ kwait(uint64 addr)
   }
 }
 
-// Per-CPU process scheduler.
-// Each CPU calls scheduler() after setting itself up.
-// Scheduler never returns.  It loops, doing:
-//  - choose a process to run.
-//  - swtch to start running that process.
-//  - eventually that process transfers control
-//    via swtch back to the scheduler.
+
+
 void
 scheduler(void)
 {
   struct proc *p;
   struct cpu *c = mycpu();
-
+  
   c->proc = 0;
+  
   for(;;){
-    // The most recent process to run may have had interrupts
-    // turned off; enable them to avoid a deadlock if all
-    // processes are waiting. Then turn them back off
-    // to avoid a possible race between an interrupt
-    // and wfi.
     intr_on();
-    intr_off();
-
+    
     int found = 0;
     for(p = proc; p < &proc[NPROC]; p++) {
       acquire(&p->lock);
       if(p->state == RUNNABLE) {
-        // Switch to chosen process.  It is the process's job
-        // to release its lock and then reacquire it
-        // before jumping back to us.
+        // MLFQ: Track statistics but use simple round-robin
+        p->ticks_in_queue++;
+        p->age++;
+        
         p->state = RUNNING;
         c->proc = p;
         swtch(&c->context, &p->context);
-
-        // Process is done running for now.
-        // It should have changed its p->state before coming back.
         c->proc = 0;
         found = 1;
       }
       release(&p->lock);
+      if(found) break;
     }
-    if(found == 0) {
-      // nothing to run; stop running on this core until an interrupt.
+    
+    if(!found) {
+      intr_on();
       asm volatile("wfi");
     }
   }
@@ -486,17 +610,37 @@ sched(void)
   mycpu()->intena = intena;
 }
 
-// Give up the CPU for one scheduling round.
 void
 yield(void)
 {
   struct proc *p = myproc();
   acquire(&p->lock);
+  
+  int is_quick_yield = (p->quantum_used == 0);  // Must be exactly 0
+  int should_promote = (is_quick_yield && p->priority > 0 && p->consecutive_quick_yields >= 5);
+  
+  if(is_quick_yield && p->priority > 0) {
+    p->consecutive_quick_yields++;
+  } else {
+    p->consecutive_quick_yields = 0;
+  }
+  
+  printf("YIELD: PID %d Q=%d quantum_used=%d quick_yields=%d promote=%d\n",
+         p->pid, p->priority, p->quantum_used, p->consecutive_quick_yields, should_promote);
+  
+  mlfq_dequeue(p);
+  
+  if(should_promote) {
+    p->priority--;
+    p->consecutive_quick_yields = 0;
+    printf("MLFQ: PID %d promoted to Q%d\n", p->pid, p->priority);
+  }
+  
+  mlfq_enqueue(p);
   p->state = RUNNABLE;
   sched();
   release(&p->lock);
 }
-
 // A fork child's very first scheduling by scheduler()
 // will swtch to forkret.
 void
@@ -684,4 +828,47 @@ procdump(void)
     printf("%d %s %s", p->pid, state, p->name);
     printf("\n");
   }
+}
+/*
+int
+getprocinfo(int pid, struct procinfo *pi)
+{
+  struct proc *p;
+  int found = -1;
+
+  for(p = proc; p < &proc[NPROC]; p++){
+    acquire(&p->lock);
+    if(p->pid == pid && p->state != UNUSED){
+      // Only set pid and state - no other fields
+      pi->pid = p->pid;
+      pi->state = p->state;
+      found = 0;
+      release(&p->lock);
+      break;
+    }
+    release(&p->lock);
+  }
+  return found;
+}
+
+*/
+int
+getprocinfo(int pid, struct procinfo *pi)
+{
+  struct proc *p;
+  int found = -1;
+
+  for(p = proc; p < &proc[NPROC]; p++){
+    acquire(&p->lock);
+    if(p->pid == pid && p->state != UNUSED){
+      pi->pid = p->pid;
+      pi->state = p->state;
+      pi->priority = p->priority;  // Add this line
+      found = 0;
+      release(&p->lock);
+      break;
+    }
+    release(&p->lock);
+  }
+  return found;
 }
