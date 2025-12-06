@@ -1,15 +1,11 @@
-#ifndef _USYSCALL_H_
-#define _USYSCALL_H_
+#ifndef K_USYSCALL_H
+#define K_USYSCALL_H
 
-#include "memlayout.h"
-
-// This structure holds the data shared between the kernel and userspace
 struct usyscall {
-    int pid; // The PID of the current process
+    int pid;
+    int ppid;
+    uint64 sz;
 };
 
-// USYSCALL is the virtual address where the read-only usyscall page is mapped.
-// It is placed just below the TRAPFRAME.
-#define USYSCALL (TRAPFRAME - PGSIZE)
+#endif
 
-#endif // _USYSCALL_H_

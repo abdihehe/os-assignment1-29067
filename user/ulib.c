@@ -7,6 +7,7 @@
 #endif
 #include "kernel/vm.h"
 #include "user/user.h"
+#include "usyscall.h"
 
 
 //
