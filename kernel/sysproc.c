@@ -6,14 +6,7 @@
 #include "spinlock.h"
 #include "proc.h"
 #include "vm.h"
-
-
-uint64
-sys_yield(void)
-{
-  yield();
-  return 0;
-}
+#include "procinfo.h"
 
 uint64
 sys_exit(void)
@@ -65,6 +58,8 @@ sys_sbrk(void)
     // memory, vmfault() will allocate it.
     if(addr + n < addr)
       return -1;
+    if(addr + n > TRAPFRAME)
+      return -1;
     myproc()->sz += n;
   }
   return addr;
@@ -114,43 +109,32 @@ sys_uptime(void)
   return xticks;
 }
 
-
+// Get process information for MLFQ debugging
+// Returns info about the calling process
 uint64
 sys_getprocinfo(void)
 {
-  int pid;
-  uint64 uaddr;
-  struct procinfo pi;
-
-  argint(0, &pid);
-  argaddr(1, &uaddr);
-
-  if(getprocinfo(pid, &pi) < 0)
-    return -1;
-
-  if(copyout(myproc()->pagetable, uaddr, (char *)&pi, sizeof(pi)) < 0)
-    return -1;
-
-  return 0;
-}
-
-uint64
-sys_sleep(void)
-{
-  int n;
-  uint ticks0;
-
-  argint(0, &n);  // No return value check - xv6 version
+  uint64 addr;
+  struct proc *p = myproc();
   
-  acquire(&tickslock);
-  ticks0 = ticks;
-  while(ticks - ticks0 < n){
-    if(myproc()->killed){
-      release(&tickslock);
-      return -1;
-    }
-    sleep(&ticks, &tickslock);
-  }
-  release(&tickslock);
+  argaddr(0, &addr);
+  
+  // Create a structure to hold the info to copy out
+  struct {
+    int pid;
+    int state;
+    int queue_level;
+    uint64 ticks_in_queue;
+  } info;
+  acquire(&p->lock);
+  info.pid = p->pid;
+  info.state = p->state;
+  info.queue_level = p->queue_level;
+  info.ticks_in_queue = p->ticks_in_queue;
+  release(&p->lock);
+  if(copyout(p->pagetable, addr, (char *)&info, sizeof(info)) < 0)
+    return -1;
+  
   return 0;
 }
+

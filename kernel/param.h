@@ -1,8 +1,4 @@
-#ifdef LAB_FS
-#define NPROC        10  // maximum number of processes
-#else
-#define NPROC        64  // maximum number of processes (speedsup bigfile)
-#endif
+#define NPROC        64  // maximum number of processes
 #define NCPU          8  // maximum number of CPUs
 #define NOFILE       16  // open files per process
 #define NFILE       100  // open files per system
@@ -13,21 +9,20 @@
 #define MAXOPBLOCKS  10  // max # of blocks any FS op writes
 #define LOGBLOCKS    (MAXOPBLOCKS*3)  // max data blocks in on-disk log
 #define NBUF         (MAXOPBLOCKS*3)  // size of disk block cache
-#ifdef LAB_FS
-#define FSSIZE       200000  // size of file system in blocks
-#else
-#ifdef LAB_LOCK
-#define FSSIZE       10000  // size of file system in blocks
-#else
-#define FSSIZE       2000   // size of file system in blocks
-#endif
-#endif
+#define FSSIZE       2000  // size of file system in blocks
 #define MAXPATH      128   // maximum file path name
-
-#ifdef LAB_UTIL
-#define USERSTACK    2     // user stack pages
-#else
 #define USERSTACK    1     // user stack pages
-#endif
 
+// MLFQ Scheduler parameters
+#define MLFQ_LEVELS  4     // Number of priority queue levels
+#define BOOST_INTERVAL 50 // Priority boost interval (ticks) - lowered for testing visibility
+// Time quanta for each queue level (in ticks)
+// Queue 0 (highest priority): 4 ticks
+// Queue 1: 8 ticks
+// Queue 2: 16 ticks
+// Queue 3 (lowest priority): 32 ticks
+#define TIME_QUANTA_0 4
+#define TIME_QUANTA_1 8
+#define TIME_QUANTA_2 16
+#define TIME_QUANTA_3 32
 

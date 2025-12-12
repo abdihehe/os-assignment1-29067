@@ -1,11 +1,3 @@
-
-
-#define NQUEUE 4
-#define BOOST_INTERVAL 5000
-#define QUANTUM_0 1
-#define QUANTUM_1 1  
-#define QUANTUM_2 2
-#define QUANTUM_3 4
 // Saved registers for kernel context switches.
 struct context {
   uint64 ra;
@@ -92,7 +84,7 @@ enum procstate { UNUSED, USED, SLEEPING, RUNNABLE, RUNNING, ZOMBIE };
 // Per-process state
 struct proc {
   struct spinlock lock;
- int consecutive_quick_yields;
+
   // p->lock must be held when using these:
   enum procstate state;        // Process state
   void *chan;                  // If non-zero, sleeping on chan
@@ -113,21 +105,9 @@ struct proc {
   struct inode *cwd;           // Current directory
   char name[16];               // Process name (debugging)
 
-  int priority;        // Current queue level (0-3)
-  int ticks_in_queue;  // Ticks spent in current queue
-  int age;             // Ticks since last priority boost
-  int quantum_used;    // Ticks used in current time slice
- struct proc *next;   // For MLFQ queue linked list
-
+  // MLFQ Scheduler fields
+  int queue_level;             // Current priority queue level (0=highest, 3=lowest)
+  uint64 ticks_in_queue;       // Time spent in current queue (in ticks)
+  uint64 total_ticks;          // Total ticks consumed by process
+  uint64 last_boost_ticks;     // Last time this process was boosted
 };
-
-
-
-struct procinfo {
-  int pid;
-  int state;
-  int priority;
-};
-
-int getprocinfo(int pid, struct procinfo *pi);
-

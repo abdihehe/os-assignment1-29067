@@ -24,7 +24,8 @@ int getpid(void);
 char* sys_sbrk(int,int);
 int pause(int);
 int uptime(void);
-int yield(void);
+int getprocinfo(uint64);
+
 // ulib.c
 int stat(const char*, struct stat*);
 char* strcpy(char*, const char*);
@@ -47,15 +48,3 @@ void printf(const char*, ...) __attribute__ ((format (printf, 1, 2)));
 // umalloc.c
 void* malloc(uint);
 void free(void*);
-
-
-// project work
-struct procinfo {
-  int pid;
-  int state;
-  int priority;
-};
-
-int getprocinfo(int pid, struct procinfo *info);
-
-int sleep(int);
